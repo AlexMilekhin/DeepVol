@@ -25,21 +25,24 @@ A quantitative finance library for modeling equity volatility surfaces, extracti
 
 ## 📂 Project Structure
 
+```text
+.
 ├── data/
 ├── metrics/
 ├── notebooks/
 ├── src/
 │   ├── data_loader.py      # Live data ingestion & Parquet persistence
-│   ├── features.py         # RND moment extraction (Skew, Kurtosis) via Breeden-Litzenberger        
-|   ├── models.py
+│   ├── features.py         # RND moment extraction (skew, kurtosis) via Breeden–Litzenberger
+│   ├── models.py
 │   └── models/
-│       ├── bs_engine.py    # Data cleaning, vectorized BS pricing & Brent IV inversion
+│       ├── bs_engine.py    # Data cleaning, vectorised BS pricing & Brent IV inversion
 │       ├── svi_fit.py      # SVI and SSVI surface fitting
-│       └── forecaster.py   # LSTM-Attention forecasting with weighted loss
-├── main.py                 # CLI Pipeline orchestrator
+│       └── forecaster.py   # LSTM + attention forecasting with weighted loss
+├── main.py                 # CLI pipeline orchestrator
 ├── setup.py                # Package installation configuration
 ├── requirements.txt
-├── viewing.py              # Data quality check
+└── viewing.py              # Data quality checks
+
 
 
 ## 🚀 Getting Started
@@ -60,7 +63,7 @@ python main.py --ticker QQQ --data-dir ./data --metrics-dir ./results
 
 ### Future Improvements
 
-## Conditional diffusion model ## 
+#### Conditional diffusion model #### 
 Hybrid Forecasting: Combine Self-Attention LSTMs for temporal priors with Conditional U-Nets for spatial refinement.
 
 Structural Fidelity: Use 5x5 kernels, Reflection Padding, and Bilinear Upsampling to ensure surface smoothness and eliminate localized artifacts.
@@ -69,7 +72,7 @@ Market Conditioning: Injects SSVI parameters and Risk-Neutral Density (RND) metr
 
 Physics-Informed Constraints: Employs a specialized loss function to penalize Calendar and Butterfly arbitrage violations, ensuring financial validity
 
-## MoE transformer ##
+#### MoE transformer ####
 
 ## 📝 License
 
@@ -77,4 +80,3 @@ Distributed under the MIT License.
 
 ## Author
 Alexander Milekhin milekhin.alexander@gmail.com
-
