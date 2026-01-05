@@ -2,7 +2,7 @@
 Main pipeline script for volatility surface modeling and forecasting.
 Can be run from command line: python main.py --ticker JPM
 """
-
+import yfinance as yf
 import argparse
 import logging
 import os
@@ -41,10 +41,11 @@ class VolatilitySurfacePipeline:
             metrics_dir: Directory for metrics output
             rate: Risk-free rate
         """
-        self.ticker = ticker
+        self.ticker = "QQQ"
         self.data_dir = Path(data_dir)
         self.metrics_dir = Path(metrics_dir)
-        self.rate = rate
+        rate_data = yf.Ticker("^IRX").history(period='1d')
+        self.rate = float(rate_data['Close'].values*0.01)
         
         # Create directories
         self.data_dir.mkdir(exist_ok=True)
@@ -85,7 +86,7 @@ class VolatilitySurfacePipeline:
             logger.info("Step 3: Fitting SVI models...")
             svi_results = self._fit_svi_surface(clean_df)
             
-            if svi_results:
+            if svi_results is not None and not svi_results.empty:
                 svi_metrics_path = self.metrics_dir / f"svi_metrics_{datetime.now().date()}.parquet"
                 svi_results.to_parquet(svi_metrics_path, index=False)
                 logger.info(f"Saved SVI metrics to {svi_metrics_path}")
@@ -94,7 +95,7 @@ class VolatilitySurfacePipeline:
             logger.info("Step 4: Fitting SSVI surface...")
             ssvi_results = self._fit_ssvi_surface(clean_df)
             
-            if ssvi_results:
+            if ssvi_results is not None and not ssvi_results.empty:
                 ssvi_metrics_path = self.metrics_dir / f"ssvi_metrics_{datetime.now().date()}.parquet"
                 ssvi_results.to_parquet(ssvi_metrics_path, index=False)
                 logger.info(f"Saved SSVI metrics to {ssvi_metrics_path}")

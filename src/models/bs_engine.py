@@ -158,6 +158,7 @@ class ImpliedVolatilityCalculator:
         intrinsic_call = max(0.0, S * exp(-q * T) - K * exp(-r * T))
         intrinsic_put = max(0.0, K * exp(-r * T) - S * exp(-q * T))
         intrinsic = intrinsic_call if is_call else intrinsic_put
+        intrinsic = intrinsic * 0.9
         if price < intrinsic:
             logger.warning(f"IV calculation failed: price {price} below intrinsic {intrinsic}")
             return np.nan
@@ -292,6 +293,12 @@ class ImpliedVolatilityCalculator:
             rel_cap = 0.80
             thr = np.where(df["mid"] < 1.0, abs_cap, rel_cap * df["mid"])
             df = df[(df["spread"] >= 0) & (df["spread"] <= thr)].copy()
+            df["k"] = np.log(df["strike"] / self._get_spot_price(df))
+            df = df[df["k"].between(-0.7, 0.5)].copy()
+            df = df[df["mid"] > 0.05].copy()
+            df = df[df["spread"] < 0.5 * df["mid"]].copy()
+            df = df[df["T"] > 0.03].copy()
+
         
         # Get spot price
         S = self._get_spot_price(df)
