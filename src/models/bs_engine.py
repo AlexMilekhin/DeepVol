@@ -1,5 +1,7 @@
 """
 Black-Scholes pricing engine and implied volatility calculation.
+
+Updated to support historical data by accepting an optional asof_date parameter.
 """
 
 import logging
@@ -9,7 +11,7 @@ import pandas as pd
 from scipy.stats import norm
 from scipy.optimize import brentq
 from math import sqrt, exp, log
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 logger = logging.getLogger(__name__)
 
@@ -239,16 +241,25 @@ class ImpliedVolatilityCalculator:
         return np.median(Fvals) if len(Fvals) > 0 else np.nan
     
     def recompute_clean_iv_surface(self, source_df: pd.DataFrame, 
-                                   r: float = 0.045) -> pd.DataFrame:
+                                   r: float = 0.045,
+                                   asof_date: Optional[date] = None) -> pd.DataFrame:
         """
         Clean and compute implied volatility surface from raw options data.
         
+        Uses two-pass approach:
+          Pass 1: Compute forward price F per expiry via put-call parity
+          Pass 2: Filter using forward-based log-moneyness k = ln(K/F), then compute IV
+        
         Args:
             source_df: Raw options DataFrame
-            r: Risk-free rate
+            r: Risk-free rate (decimal, e.g., 0.045 for 4.5%)
+            asof_date: Reference date for T calculation. If None, uses today's date.
+                       For historical data, pass the historical observation date.
             
         Returns:
-            Cleaned DataFrame with IV calculations
+            Cleaned DataFrame with IV calculations.
+            Log-moneyness 'k' is forward-based: k = ln(K/F).
+            Implied volatility 'iv_clean' is annualized (decimal).
         """
         df = source_df.copy()
         
@@ -262,8 +273,20 @@ class ImpliedVolatilityCalculator:
         df["expiry"] = pd.to_datetime(df["expiry"], errors="coerce")
         df = df.dropna(subset=["expiry", "strike"])
         
-        now_utc = datetime.now(timezone.utc)
-        df["T"] = (df["expiry"].dt.normalize() - pd.Timestamp(now_utc.date())).dt.days.clip(lower=0) / 365.0
+        # Use provided asof_date or default to today
+        if asof_date is not None:
+            reference_date = pd.Timestamp(asof_date)
+        else:
+            reference_date = pd.Timestamp(datetime.now(timezone.utc).date())
+        
+        df["T"] = (df["expiry"].dt.normalize() - reference_date).dt.days / 365.0
+        
+        # Filter out expired options (T <= 0)
+        df = df[df["T"] > 0].copy()
+        
+        if len(df) == 0:
+            logger.warning("No options with positive T remaining after filtering")
+            return pd.DataFrame()
         
         # Standardize option type
         if "type" in df.columns:
@@ -286,24 +309,78 @@ class ImpliedVolatilityCalculator:
         
         df = df[df["mid"] > 0].copy()
         
-        # Filter by spread
+        if len(df) == 0:
+            return pd.DataFrame()
+        
+        # Basic spread filter (before forward calculation)
         if {"bid", "ask"}.issubset(df.columns):
             df["spread"] = df["ask"] - df["bid"]
             abs_cap = 0.25
             rel_cap = 0.80
             thr = np.where(df["mid"] < 1.0, abs_cap, rel_cap * df["mid"])
             df = df[(df["spread"] >= 0) & (df["spread"] <= thr)].copy()
-            df["k"] = np.log(df["strike"] / self._get_spot_price(df))
-            df = df[df["k"].between(-0.7, 0.5)].copy()
+            
+            if len(df) == 0:
+                return pd.DataFrame()
+            
+            # Basic filters that don't depend on moneyness
             df = df[df["mid"] > 0.05].copy()
-            df = df[df["spread"] < 0.5 * df["mid"]].copy()
             df = df[df["T"] > 0.03].copy()
 
+        if len(df) == 0:
+            return pd.DataFrame()
         
-        # Get spot price
+        # Get spot price (needed for q calculation)
         S = self._get_spot_price(df)
         df["S"] = S
-        df["k"] = np.log(df["strike"] / S)
+        
+        # =====================================================================
+        # PASS 1: Compute forward price F for each expiry via put-call parity
+        # =====================================================================
+        forwards = {}  # expiry -> F
+        for exp, g in df.groupby("expiry", sort=True):
+            if g.empty:
+                continue
+            T = float(g["T"].iloc[0])
+            if T <= 0:
+                continue
+            F = self.infer_forward_from_parity(g, r)
+            if np.isfinite(F) and F > 0:
+                forwards[exp] = F
+        
+        if not forwards:
+            logger.warning("Could not compute forward price for any expiry")
+            return pd.DataFrame()
+        
+        # Map forward prices to dataframe
+        df["F"] = df["expiry"].map(forwards)
+        
+        # Drop expiries where we couldn't compute F
+        df = df[df["F"].notna()].copy()
+        
+        if len(df) == 0:
+            return pd.DataFrame()
+        
+        # =====================================================================
+        # PASS 2: Filter using forward-based k = ln(K/F), then compute IV
+        # =====================================================================
+        
+        # Compute forward-based log-moneyness: k = ln(K/F)
+        df["k"] = np.log(df["strike"] / df["F"])
+        
+        # Filter by forward-based log-moneyness
+        # Typical range: roughly -0.7 to +0.5 (deep OTM puts to moderate OTM calls)
+        df = df[df["k"].between(-0.7, 0.5)].copy()
+        
+        if len(df) == 0:
+            return pd.DataFrame()
+        
+        # Additional spread filter relative to mid
+        if "spread" in df.columns:
+            df = df[df["spread"] < 0.5 * df["mid"]].copy()
+        
+        if len(df) == 0:
+            return pd.DataFrame()
         
         # Calculate IV per expiry
         out = []
@@ -315,14 +392,14 @@ class ImpliedVolatilityCalculator:
             if T <= 0:
                 continue
             
-            F = self.infer_forward_from_parity(g, r)
-            if not np.isfinite(F):
-                continue
+            F = forwards[exp]
             
+            # Implied dividend yield from forward: F = S * exp((r-q)*T) => q = r - ln(F/S)/T
             q = r - (1.0 / T) * np.log(max(F, 1e-12) / S)
+            
             gg = g.copy()
             
-            # Calculate IV for each option
+            # Calculate IV for each option (annualized, decimal)
             gg["iv_clean"] = gg.apply(
                 lambda x: self.implied_vol(
                     x["type"] == "call", S, x["strike"], r, q, T, x["mid"]
@@ -330,9 +407,11 @@ class ImpliedVolatilityCalculator:
                 axis=1
             )
             
-            # Filter reasonable IVs
+            # Filter reasonable IVs (annualized decimal: 0.05% to 1000%)
             gg = gg[(gg["iv_clean"] > 0.0005) & (gg["iv_clean"] < 10.0)]
-            out.append(gg)
+            
+            if len(gg) > 0:
+                out.append(gg)
         
         clean = pd.concat(out, ignore_index=True) if out else pd.DataFrame()
         return clean
@@ -355,4 +434,3 @@ class ImpliedVolatilityCalculator:
             return float(hist["Close"].iloc[-1])
         except Exception as e:
             raise RuntimeError(f"Cannot determine spot S: {e}") from e
-

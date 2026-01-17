@@ -40,8 +40,24 @@ class SVIFitter:
     @staticmethod
     def svi_variance(k: np.ndarray, T: float, a: float, b: float, rho: float,
                     m: float, sigma: float) -> np.ndarray:
-        """Calculate SVI total variance."""
-        return 0.5 * (a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))) * T
+        """Calculate SVI total implied variance w(k).
+        
+        Standard Gatheral (2004) definition:
+        w(k) = a + b(ρ(k-m) + √((k-m)² + σ²))
+        
+        Note: w(k) represents total IMPLIED variance (independent of T in the SVI parameterization).
+        To get annualized implied volatility: σ(k,T) = √(w(k)/T)
+        To get total variance: total_var(k,T) = w(k) * T
+        
+        Args:
+            k: Log-moneyness
+            T: Time to expiry (not used in calculation but kept for API consistency)
+            a, b, rho, m, sigma: SVI parameters
+            
+        Returns:
+            w(k): Total implied variance
+        """
+        return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
     
     @staticmethod
     def svi_vol(k: np.ndarray, T: float, a: float, b: float, rho: float,
@@ -82,15 +98,22 @@ class SVIFitter:
         target_vol = df_expiry["iv_clean"].values
         
         # Initial guess
-        a0 = np.min(target_vol)**2 * T * 2
+        a0 = max(1e-6, np.min(target_vol)**2 * T * 2)  # Ensure positive
         b0 = 0.1
         rho0 = -0.5
         m0 = 0.0
         sigma0 = 0.1
         
         initial_guess = [a0, b0, rho0, m0, sigma0]
-        bounds = ([-np.inf, 0, -1, -np.inf, 1e-3], 
-                 [np.inf, np.inf, 1, np.inf, np.inf])
+        
+        # Proper no-arbitrage bounds (Gatheral & Jacquier 2014):
+        # - a >= 0 (ensures w(k) can be positive)
+        # - b >= 0 (no calendar arbitrage)
+        # - |rho| < 1 (butterfly arbitrage)
+        # - sigma > 0 (well-defined parameterization)
+        # Additional: 4*sigma*b >= (1 + |rho|)^2 - but hard to enforce in box constraints
+        bounds = ([1e-6, 0, -0.999, -np.inf, 1e-3],  # Lower bounds
+                 [np.inf, np.inf, 0.999, np.inf, np.inf])  # Upper bounds
         
         try:
             result = least_squares(
@@ -313,4 +336,3 @@ class SSVIFitter:
         theta_arr = np.array([thetas[e] for e in exps_sorted])
         theta_mono = np.maximum.accumulate(theta_arr)
         return {e: th for e, th in zip(exps_sorted, theta_mono)}
-
