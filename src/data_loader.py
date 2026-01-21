@@ -19,8 +19,6 @@ class OptionsDataLoader:
     
     def __init__(self, ticker: str, use_openbb: bool = True):
         """
-        Initialize the data loader.
-        
         Args:
             ticker: Stock ticker symbol (e.g., 'JPM')
             use_openbb: Whether to use OpenBB for options data (default: True)
@@ -31,7 +29,6 @@ class OptionsDataLoader:
         
     def fetch_options_chain(self) -> pd.DataFrame:
         """
-        Fetch options chain data from OpenBB or yfinance.
         
         Returns:
             DataFrame with options chain data
@@ -124,7 +121,6 @@ class OptionsDataLoader:
     
     def fetch_historical_prices(self, period: str = "2y") -> pd.DataFrame:
         """
-        Fetch historical underlying prices.
         
         Args:
             period: Time period for historical data (default: "2y")
@@ -144,7 +140,6 @@ class OptionsDataLoader:
     def save_data(self, options_df: pd.DataFrame, hist_df: Optional[pd.DataFrame] = None,
                   output_dir: str = "data") -> Tuple[str, Optional[str]]:
         """
-        Save fetched data to parquet files.
         
         Args:
             options_df: Options chain DataFrame

@@ -61,7 +61,7 @@ ENV/
 env.bak/
 venv.bak/
 
-# Data files - too large for git
+# Data files
 data/
 historical_results/
 *.parquet
@@ -84,3 +84,10 @@ metrics/
 
 temp/
 src/models/__pycache__/bs_engine.cpython-313.pyc
+
+data/
+metrics/
+data_loading/
+.dolt/
+.doltcfg/
+batch_logs/

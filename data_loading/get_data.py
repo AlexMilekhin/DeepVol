@@ -11,8 +11,10 @@ engine = create_engine(DB_URL)
 
 # 2. Extraction Settings
 # Change this to any ticker from your list (ADBE, NFLX, etc.)
-TICKER = 'ADBE' 
-OUTPUT_FILE = f"{TICKER}.lower()_full_history.parquet"
+TICKER = os.getenv("TICKER", "COST").strip().upper()
+safe_ticker = TICKER.lower().replace(".", "_")
+OUTPUT_FILE = f"{safe_ticker}_full_history.parquet"
+OUTPUT_FILE = f"{TICKER.lower()}_full_history.parquet"
 CHUNK_SIZE = 50000 
 
 print(f"Checking database for {TICKER}...")

@@ -65,7 +65,7 @@ class RNDFeatureExtractor:
         theta = row['theta']
         rho = row['ssvi_rho']
         eta = row['ssvi_eta']
-        gamma = row['ssvi_p']  # Note: 'p' in params file maps to 'gamma'
+        gamma = row['ssvi_p']  # Note: 'p' maps to 'gamma'
         
         # Calculate variance w(k)
         w_grid = self.ssvi_power_law(log_moneyness, theta, rho, eta, gamma)

@@ -18,34 +18,87 @@ class RegimeFeatureExtractor:
     """Extract regime features from existing SVI time series."""
     
     def __init__(self, lookback_percentile: int = 60, min_periods: int = 20):
-        """
-        Args:
-            lookback_percentile: Window for percentile calculations (trading days)
-            min_periods: Minimum periods required for rolling calculations
-        """
         self.lookback = lookback_percentile
         self.min_periods = min_periods
+    
+    def _expanding_then_rolling_rank(self, series: pd.Series) -> pd.Series:
+        """
+        Compute rolling percentile rank with expanding window for early periods.
+        Avoids all-NaN results when history is shorter than lookback.
+        """
+        result = pd.Series(index=series.index, dtype=float)
+        values = series.values
+        
+        for i in range(len(series)):
+            if i < self.min_periods - 1:
+                result.iloc[i] = np.nan
+            elif i < self.lookback:
+                # expanding window (all data up to this point)
+                window = values[:i + 1]
+                result.iloc[i] = (window < values[i]).sum() / len(window)
+            else:
+                # rolling window
+                window = values[i - self.lookback + 1:i + 1]
+                result.iloc[i] = (window < values[i]).sum() / len(window)
+        
+        return result
+    
+    def _expanding_then_rolling_zscore(self, series: pd.Series) -> pd.Series:
+        """
+        Compute rolling z-score with expanding window for early periods.
+        """
+        result = pd.Series(index=series.index, dtype=float)
+        values = series.values
+        
+        for i in range(len(series)):
+            if i < self.min_periods - 1:
+                result.iloc[i] = np.nan
+            elif i < self.lookback:
+                # Use expanding window
+                window = values[:i + 1]
+                mean = np.mean(window)
+                std = np.std(window) + 1e-8
+                result.iloc[i] = (values[i] - mean) / std
+            else:
+                # Use rolling window
+                window = values[i - self.lookback + 1:i + 1]
+                mean = np.mean(window)
+                std = np.std(window) + 1e-8
+                result.iloc[i] = (values[i] - mean) / std
+        
+        return result
     
     def extract_regime_features(self, df_svi: pd.DataFrame) -> pd.DataFrame:
         """
         Add regime features to SVI DataFrame.
-        
-        Args:
-            df_svi: DataFrame with columns [asof, expiry, T, ATM_IV, ATM_skew, ATM_curvature]
-            
-        Returns:
-            Enriched DataFrame with regime features
         """
         logger.info(f"Extracting regime features from {len(df_svi)} records...")
         
         df = df_svi.copy()
-        df = df.sort_values(['expiry', 'asof']).reset_index(drop=True)
+        df = df.sort_values(['asof', 'expiry']).reset_index(drop=True)
         
-        # 1. Volatility Level Regime
-        logger.info("  Computing IV regime indicators...")
-        df['IV_percentile'] = df.groupby('expiry')['ATM_IV'].transform(
-            lambda x: x.rolling(self.lookback, min_periods=self.min_periods).rank(pct=True)
+        
+        # For each date, get a representative IV (e.g., shortest expiry or average)
+        
+        daily_iv = df.groupby('asof').agg({
+            'ATM_IV': 'mean',
+            'ATM_skew': 'mean',
+        }).sort_index()
+        
+        # Compute regime features on the DAILY series (not per-expiry)
+        daily_iv['IV_percentile'] = self._expanding_then_rolling_rank(daily_iv['ATM_IV'])
+        daily_iv['ATM_IV_zscore'] = self._expanding_then_rolling_zscore(daily_iv['ATM_IV'])
+        daily_iv['skew_percentile'] = self._expanding_then_rolling_rank(daily_iv['ATM_skew'])
+        daily_iv['ATM_skew_zscore'] = self._expanding_then_rolling_zscore(daily_iv['ATM_skew'])
+        
+        # Merge back to main df
+        daily_features = ['IV_percentile', 'ATM_IV_zscore', 'skew_percentile', 'ATM_skew_zscore']
+        df = df.merge(
+            daily_iv[daily_features].reset_index(),
+            on='asof',
+            how='left'
         )
+        
         
         # Discrete regime (for interpretation)
         df['IV_regime'] = pd.cut(
@@ -54,7 +107,7 @@ class RegimeFeatureExtractor:
             labels=['low', 'normal', 'elevated', 'high']
         )
         
-        # 2. Volatility Momentum (trending vs mean-reverting)
+        # Volatility Momentum (per expiry)
         logger.info("  Computing IV momentum...")
         for lag in [5, 10, 20]:
             df[f'IV_change_{lag}d'] = df.groupby('expiry')['ATM_IV'].diff(lag)
@@ -66,34 +119,26 @@ class RegimeFeatureExtractor:
         # Acceleration (second derivative)
         df['IV_acceleration'] = df.groupby('expiry')['IV_change_5d'].diff()
         
-        # 3. Skew Regime (risk aversion / put demand)
-        logger.info("  Computing skew regime...")
-        df['skew_percentile'] = df.groupby('expiry')['ATM_skew'].transform(
-            lambda x: x.rolling(self.lookback, min_periods=self.min_periods).rank(pct=True)
-        )
-        
-        # Absolute skew level (more negative = more risk aversion)
+        # Skew regime
         df['skew_regime'] = pd.cut(
             df['ATM_skew'],
             bins=[-np.inf, -0.15, -0.05, 0.05, np.inf],
             labels=['extreme_put_skew', 'high_put_skew', 'neutral', 'call_skew']
         )
         
-        # 4. Curvature Regime (smile convexity)
-        logger.info("  Computing curvature indicators...")
-        df['curv_percentile'] = df.groupby('expiry')['ATM_curvature'].transform(
-            lambda x: x.rolling(self.lookback, min_periods=self.min_periods).rank(pct=True)
-        )
+        # Curvature percentile - compute on daily aggregate
+        daily_curv = df.groupby('asof')['ATM_curvature'].mean()
+        daily_curv_pct = self._expanding_then_rolling_rank(daily_curv)
+        curv_map = pd.Series(daily_curv_pct.values, index=daily_curv.index)
+        df['curv_percentile'] = df['asof'].map(curv_map)
         
-        # 5. Term Structure Features (requires multiple expiries per date)
+     
         logger.info("  Computing term structure indicators...")
         
-        # For each date, fit linear slope across expiries
         def compute_term_slope(group):
             if len(group) < 2:
                 return pd.Series(0.0, index=group.index)
             try:
-                # Slope of IV vs T
                 slope = np.polyfit(group['T'], group['ATM_IV'], 1)[0]
                 return pd.Series(slope, index=group.index)
             except:
@@ -101,64 +146,28 @@ class RegimeFeatureExtractor:
         
         df['term_slope'] = df.groupby('asof', group_keys=False).apply(compute_term_slope)
         
-        # Term structure regime
         df['term_structure'] = pd.cut(
             df['term_slope'],
             bins=[-np.inf, -0.05, 0.05, np.inf],
             labels=['inverted', 'flat', 'upward']
         )
         
-        # 6. Volatility of Volatility (realized vol of IV changes)
+        
         logger.info("  Computing vol-of-vol...")
-        df['IV_vol'] = df.groupby('expiry')['IV_change_5d'].transform(
-            lambda x: x.rolling(20, min_periods=10).std()
+        daily_iv['IV_change_5d'] = daily_iv['ATM_IV'].diff(5)
+        daily_iv['IV_vol'] = daily_iv['IV_change_5d'].rolling(20, min_periods=5).std()
+        df = df.merge(
+            daily_iv[['IV_vol']].reset_index(),
+            on='asof',
+            how='left'
         )
         
-        # 7. Temporal Distance Features (for attention weighting)
-        logger.info("  Computing temporal features...")
         
-        # Days since extreme IV
-        def days_since_extreme(series, threshold=0.9):
-            """Days since IV was in top 10%"""
-            extreme_dates = series[series > series.quantile(threshold)].index
-            if len(extreme_dates) == 0:
-                return pd.Series(999, index=series.index)
-            
-            result = pd.Series(index=series.index, dtype=float)
-            for idx in series.index:
-                past_extremes = extreme_dates[extreme_dates <= idx]
-                if len(past_extremes) > 0:
-                    result[idx] = idx - past_extremes[-1]
-                else:
-                    result[idx] = 999
-            return result
-        
-        df['days_since_high_iv'] = df.groupby('expiry')['ATM_IV'].transform(
-            lambda x: days_since_extreme(x, 0.9)
-        )
-        
-        # 8. Cross-sectional Features (when available)
-        # Note: These only work if you have multiple tickers
         if 'ticker' in df.columns:
             logger.info("  Computing cross-sectional features...")
-            
-            # IV rank vs other tickers on same date
             df['IV_cross_sectional_rank'] = df.groupby(['asof', 'T'])['ATM_IV'].rank(pct=True)
-            
-            # Correlation with market (requires multiple tickers)
-            # Skip for now - needs separate implementation
         
-        # 9. Statistical Features for MoE Gating
-        logger.info("  Computing statistical indicators...")
-        
-        # Rolling statistics
-        for col in ['ATM_IV', 'ATM_skew']:
-            df[f'{col}_zscore'] = df.groupby('expiry')[col].transform(
-                lambda x: (x - x.rolling(self.lookback, min_periods=self.min_periods).mean()) / 
-                         (x.rolling(self.lookback, min_periods=self.min_periods).std() + 1e-8)
-            )
-        
-        # Handle NaN values (fill with neutral values)
+        # Handle NaN values
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].fillna(method='ffill').fillna(0)
         
@@ -171,15 +180,13 @@ class RegimeFeatureExtractor:
         regime_features = [
             'IV_percentile', 'IV_momentum', 'IV_acceleration',
             'skew_percentile', 'curv_percentile', 'term_slope',
-            'IV_vol', 'days_since_high_iv',
-            'ATM_IV_zscore', 'ATM_skew_zscore'
+            'IV_vol', 'ATM_IV_zscore', 'ATM_skew_zscore'
         ]
         
         available = [f for f in regime_features if f in df.columns]
         summary = df[available].describe()
         
         return summary
-
 
 def enrich_historical_svi(
     input_path: str,

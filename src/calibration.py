@@ -14,7 +14,7 @@ from mpl_toolkits.mplot3d import Axes3D
 # Implement SVI model fitting
 def svi_variance(k, T, a, b, rho, m, sigma):
     """SVI total variance function."""
-    return 0.5 * (a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))) * T
+    return  (a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))) * T
 
 def svi_vol(k, T, a, b, rho, m, sigma):
     """SVI implied volatility function."""

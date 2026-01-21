@@ -1,7 +1,5 @@
 """
 Black-Scholes pricing engine and implied volatility calculation.
-
-Updated to support historical data by accepting an optional asof_date parameter.
 """
 
 import logging
@@ -209,16 +207,8 @@ class ImpliedVolatilityCalculator:
             return np.nan
     
     def infer_forward_from_parity(self, df_exp: pd.DataFrame, r: float) -> float:
-        """
-        Infer forward price from put-call parity.
         
-        Args:
-            df_exp: DataFrame with options for a single expiry
-            r: Risk-free rate
-            
-        Returns:
-            Forward price (NaN if calculation fails)
-        """
+        
         tmap = df_exp["type"].astype(str).str.lower().str[0]
         df_exp = df_exp.assign(_t=tmap)
         
@@ -243,24 +233,7 @@ class ImpliedVolatilityCalculator:
     def recompute_clean_iv_surface(self, source_df: pd.DataFrame, 
                                    r: float = 0.045,
                                    asof_date: Optional[date] = None) -> pd.DataFrame:
-        """
-        Clean and compute implied volatility surface from raw options data.
         
-        Uses two-pass approach:
-          Pass 1: Compute forward price F per expiry via put-call parity
-          Pass 2: Filter using forward-based log-moneyness k = ln(K/F), then compute IV
-        
-        Args:
-            source_df: Raw options DataFrame
-            r: Risk-free rate (decimal, e.g., 0.045 for 4.5%)
-            asof_date: Reference date for T calculation. If None, uses today's date.
-                       For historical data, pass the historical observation date.
-            
-        Returns:
-            Cleaned DataFrame with IV calculations.
-            Log-moneyness 'k' is forward-based: k = ln(K/F).
-            Implied volatility 'iv_clean' is annualized (decimal).
-        """
         df = source_df.copy()
         
         # Validate required columns
@@ -334,9 +307,7 @@ class ImpliedVolatilityCalculator:
         S = self._get_spot_price(df)
         df["S"] = S
         
-        # =====================================================================
-        # PASS 1: Compute forward price F for each expiry via put-call parity
-        # =====================================================================
+        
         forwards = {}  # expiry -> F
         for exp, g in df.groupby("expiry", sort=True):
             if g.empty:
@@ -361,15 +332,11 @@ class ImpliedVolatilityCalculator:
         if len(df) == 0:
             return pd.DataFrame()
         
-        # =====================================================================
-        # PASS 2: Filter using forward-based k = ln(K/F), then compute IV
-        # =====================================================================
         
         # Compute forward-based log-moneyness: k = ln(K/F)
         df["k"] = np.log(df["strike"] / df["F"])
         
         # Filter by forward-based log-moneyness
-        # Typical range: roughly -0.7 to +0.5 (deep OTM puts to moderate OTM calls)
         df = df[df["k"].between(-0.7, 0.5)].copy()
         
         if len(df) == 0:
@@ -407,7 +374,7 @@ class ImpliedVolatilityCalculator:
                 axis=1
             )
             
-            # Filter reasonable IVs (annualized decimal: 0.05% to 1000%)
+            # Filter reasonable IVs
             gg = gg[(gg["iv_clean"] > 0.0005) & (gg["iv_clean"] < 10.0)]
             
             if len(gg) > 0:

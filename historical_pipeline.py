@@ -5,8 +5,8 @@ Processes historical options data through the existing volatility surface models
 Uses the same src.models components as main.py but iterates over historical dates.
 
 Usage:
-    python historical_pipeline.py --file ADBE_full_history.parquet --ticker ADBE --test
-    python historical_pipeline.py --file ADBE_full_history.parquet --ticker ADBE --output-dir ./results
+    python historical_pipeline.py --file {file_name} --ticker {TICKER} --test
+    python historical_pipeline.py --file {file_name} --ticker {TICKER} --output-dir ./results
 """
 
 import logging
@@ -41,9 +41,6 @@ except ImportError as e:
     IMPORTS_AVAILABLE = False
 
 
-# =============================================================================
-# Column Mapping
-# =============================================================================
 @dataclass
 class ColumnMapping:
     """Maps historical data columns to standard pipeline column names."""
@@ -88,9 +85,6 @@ class ColumnMapping:
         return mapping
 
 
-# =============================================================================
-# Historical Data Loader
-# =============================================================================
 class HistoricalDataLoader:
     """Loads historical options data and fetches underlying prices/rates from Yahoo."""
     
@@ -257,9 +251,6 @@ class HistoricalDataLoader:
         }
 
 
-# =============================================================================
-# Historical Pipeline
-# =============================================================================
 class HistoricalVolatilitySurfacePipeline:
     """Pipeline for processing historical options data."""
     
@@ -308,7 +299,6 @@ class HistoricalVolatilitySurfacePipeline:
             if debug:
                 print(f"      [DEBUG] Options: {len(snapshot)}, Spot: ${S:.2f}, Rate: {rate*100:.2f}%")
             
-            # KEY FIX: Pass asof_date to recompute_clean_iv_surface
             clean_df = self.iv_calculator.recompute_clean_iv_surface(
                 snapshot, r=rate, asof_date=asof_date
             )
