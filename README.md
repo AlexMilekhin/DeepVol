@@ -1,82 +1,120 @@
-# Volatility Surface Modeling & ML Forecasting
+# DeepVol: Neural Volatility Surface Modeling & Forecasting
 
-A quantitative finance library for modeling equity volatility surfaces, extracting risk-neutral densities (RND), and forecasting implied volatility using deep learning architectures. This project combines classical quantitative finance theory with modern machine learning architectures.
+**DeepVol** is a comprehensive quantitative finance library designed for high-fidelity volatility surface modeling, risk-neutral density (RND) extraction, and predictive analytics using deep learning. This project bridges classical stochastic modeling with modern machine learning architectures, specifically leveraging a **Mixture-of-Experts (MoE)** network to forecast implied volatility dynamics.
 
 ## 🌟 Key Features
 
-* **Surface Calibration**: Implements SVI and global SSVI (Surface SVI) fitting with strict adherence to no-arbitrage constraints.
-* **Risk-Neutral Density (RND) Extraction**: Derives probability density functions from the volatility surface via the Breeden-Litzenberger identity, extracting Skewness, Kurtosis, and Martingale diagnostic metrics.
-* **Predictive Analytics**: Utilizes an LSTM + Self-Attention network to forecast implied volatility dynamics, weighting training samples by market liquidity metrics.
-* **Automated Production Pipeline**: End-to-end orchestration from live market data ingestion (Yahoo Finance/OpenBB) to feature engineering and metric persistence in Parquet format.
+* **Arbitrage-Free Surface Calibration**: Implementation of SVI (Slice) and global SSVI (Surface) models with strict adherence to no-arbitrage constraints.
+* **Risk-Neutral Density (RND) Extraction**: Derivation of probability density functions (PDF) via the Breeden-Litzenberger identity, providing higher-order moments (Skewness, Kurtosis) for tail-risk analysis.
+* **Neural Volatility Forecasting**: A regime-aware Mixture-of-Experts (MoE) architecture that specializes in predicting 10-day changes in total variance.
+* **Automated Data Pipeline**: End-to-end orchestration from live market data ingestion (Yahoo Finance) to feature engineering and Parquet-based persistence.
+* **Vectorized Engineering**: High-throughput Black-Scholes pricing and IV inversion using optimized NumPy operations and Brent’s method.
 
-## 🏗 System Architecture & Design Choices
+---
 
-### 1. Quantitative Modeling Engine (`src/models/`)
-* **Vectorized Greeks & IV**: The `ImpliedVolatilityCalculator` utilizes vectorized NumPy operations for high-throughput pricing. Implied Volatility inversion is implemented via Brent's method for numerical stability over a wide range of moneyness.
-* **No-Arbitrage Constraints**: The `SSVIFitter` enforces the Gatheral/Jacquier conditions ($\eta(1+|\rho|) \leq 2$) and utilizes monotone theta enforcement across the term structure to eliminate calendar arbitrage.
-* **RND Feature Engineering**: Computes RND mean/variance/skew/kurtosis via Simpson-rule integration of a Breeden–Litzenberger density implied by a smoothed SSVI surface on a 5,000-point strike grid.
+## 🏗 Quantitative Engine
 
-### 2. Deep Learning Architecture (`src/models/forecaster.py`)
-**LSTM + temporal self-attention** model for per-expiry ATM IV forecasting, using ATM/skew/curvature + SVI/SSVI params + RND moments. Trained with weighted MSE and arbitrage/consistency penalties (martingale error, fit cost, calendar violations); Adam + LR decay, grad clipping, early stopping; evaluated with MSE/MAE vs naïve baseline.
+### 1. Volatility Surface Modeling (`src/models/`)
 
-### 3. Engineering Patterns (`main.py`)
-* **Dynamic Risk-Free Rates**: The pipeline automatically fetches the current 13-week Treasury Bill yield (`^IRX`) to ensure the pricing model uses the most recent market-implied risk-free rate.
-* **Modular Data Handling**: Separates data collection, cleaning, and modeling into distinct stages. All intermediate outputs are stored as Parquet files to preserve schema integrity and optimize I/O performance.
+The framework supports two primary calibration routines to ensure a smooth, arbitrage-free surface:
+
+* **SVI (Stochastic Volatility Inspired)**: Calibrates individual expiry slices using the Gatheral (2004) parameterization:
+
+$$w(k) = a + b(\rho(k-m) + \sqrt{(k-m)^2 + \sigma^2})$$
+
+* **Global SSVI (Surface SVI)**: Fits the entire surface simultaneously to ensure term-structure consistency and eliminate calendar arbitrage:
+
+$$w(k) = a + b(\rho(k-m) + \sqrt{(k-m)^2 + \sigma^2})$$
+
+with the power-law function $$\phi(\theta) = \eta \theta^{-\gamma}$$
+
+### 2. Risk-Neutral Density Extraction (`src/features.py`)
+
+Utilizing the Breeden-Litzenberger identity, the library reconstructs the market-implied PDF from the calibrated surface:
+
+$$f(K) = e^{rT} \frac{\partial^2 C}{\partial K^2}$$
+
+The module performs numerical integration via Simpson’s rule on a 5,000-point grid to extract:
+
+* **Skewness & Kurtosis**: Quantifying market-implied asymmetry and tail risk.
+* **Martingale Diagnostic**: Monitoring the error  to ensure model consistency with the forward price. $$|E^{RN}[S_T] - F|$$
+
+---
+
+## 🧠 Mixture-of-Experts (MoE) Forecasting
+
+The forecasting engine utilizes a specialized deep learning architecture to predict the **10-trading-day change in total variance** (h=10):
+
+$$y_t = w_{t+h} - w_t$$
+
+### Architecture & Design
+
+* **LSTM Encoder**: Processes historical sequences of volatility and regime features.
+* **Regime-Aware Gating**: A gating network maps input features (e.g., IV z-scores, momentum, term-structure slope) to mixture weights over **4 specialized expert heads**.
+* **Feature Enrichment**: Includes rolling z-scores, IV momentum, and volatility-of-volatility (vol-of-vol) indicators to capture shifting market regimes.
+* **Physics-Informed Sample Weighting**: Employs a "physics-based weight-decay" mechanism that penalizes the loss function for training samples exhibiting high SVI/SSVI fit costs, calendar arbitrage violations, or RND martingale errors.
+* **Benchmark Performance**: The MoE model achieves a **7.7% MAE improvement** over the 
+σ -persistence baseline.
+
+---
 
 ## 📂 Project Structure
 
 ```text
 .
-├── data/
-├── metrics/
-├── notebooks/
 ├── src/
-│   ├── data_loader.py      # Live data ingestion & Parquet persistence
-│   ├── features.py         # RND moment extraction (skew, kurtosis) via Breeden–Litzenberger
-│   ├── models.py
-│   └── models/
-│       ├── bs_engine.py    # Data cleaning, vectorised BS pricing & Brent IV inversion
-│       ├── svi_fit.py      # SVI and SSVI surface fitting
-│       └── forecaster.py   # LSTM + attention forecasting with weighted loss
-├── main.py                 # CLI pipeline orchestrator
-├── setup.py                # Package installation configuration
+│   ├── models/
+│   │   ├── bs_engine.py    # Vectorized BS pricing & Brent IV inversion
+│   │   └── svi_fit.py      # SVI and SSVI surface fitting logic
+│   ├── features.py         # RND moment extraction (skew, kurtosis)
+│   └── data_loader.py      # Live data ingestion & cleaning
+├── main.py                 # Live production pipeline orchestrator
+├── historical_pipeline.py  # Historical backtesting & dataset generation
+├── moe_feature_enrichment.py# ML feature engineering (regime indicators)
+├── notebooks/              # Research & development walkthroughs
 ├── requirements.txt
-└── viewing.py              # Data quality checks
+└── README.md
 
+```
 
+---
 
 ## 🚀 Getting Started
 
 ### Installation
 
 ```bash
+git clone https://github.com/alexmilekhin/deepvol.git
+cd deepvol
 pip install -e .
+
 ```
 
-### Running the Pipeline (Example: QQQ)
+### Running the Live Pipeline
 
-Execute the full suite—from data collection and surface calibration to RND feature extraction—with a single command:
+Calibrate the surface and extract features for a specific ticker.
 
 ```bash
-python main.py --ticker QQQ --data-dir ./data --metrics-dir ./results
+python main.py --ticker {TICKER} --data-dir ./data --metrics-dir ./results
+
 ```
 
-### Future Improvements
+The pipeline automatically fetches the current 13-week Treasury yield (`^IRX`) as the risk-free rate proxy.
 
-#### Conditional diffusion model #### 
-Hybrid Forecasting: Combine Self-Attention LSTMs for temporal priors with Conditional U-Nets for spatial refinement.
+### Training Data Generation
 
-Structural Fidelity: Use 5x5 kernels, Reflection Padding, and Bilinear Upsampling to ensure surface smoothness and eliminate localized artifacts.
+Process historical data to generate enriched feature sets for ML training:
 
-Market Conditioning: Injects SSVI parameters and Risk-Neutral Density (RND) metrics via FiLM blocks to adapt generation to specific volatility regimes.
+```bash
+python historical_pipeline.py --file data/options_data.parquet --ticker {TICKER}
+python moe_feature_enrichment.py --input historical_results/historical_svi_{TICKER}.parquet
 
-Physics-Informed Constraints: Employs a specialized loss function to penalize Calendar and Butterfly arbitrage violations, ensuring financial validity
+```
 
-#### MoE transformer ####
+---
 
-## 📝 License
+## 📝 License & Author
 
-Distributed under the MIT License.
+**Author**: Alexander Milekhin — milekhin.alexander@gmail.com
 
-## Author
-Alexander Milekhin milekhin.alexander@gmail.com
+Distributed under the MIT License. See `LICENSE` for more information.

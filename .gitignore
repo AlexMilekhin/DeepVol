@@ -74,7 +74,6 @@ options/
 results/
 training_results/
 metrics/
-*.pt
 *.pth
 *.ckpt
 
