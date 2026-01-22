@@ -24,7 +24,7 @@ $$w(k) = a + b(\rho(k-m) + \sqrt{(k-m)^2 + \sigma^2})$$
 
 * **Global SSVI (Surface SVI)**: Fits the entire surface simultaneously to ensure term-structure consistency and eliminate calendar arbitrage:
 
-$$w(k) = a + b(\rho(k-m) + \sqrt{(k-m)^2 + \sigma^2})$$
+$$w(k, \theta) = \frac{\theta}{2} \left[ 1 + \rho \phi(\theta) k + \sqrt{(\phi(\theta) k + \rho)^2 + (1 - \rho^2)} \right]$$
 
 with the power-law function $$\phi(\theta) = \eta \theta^{-\gamma}$$
 
@@ -64,14 +64,18 @@ $$y_t = w_{t+h} - w_t$$
 .
 ├── src/
 │   ├── models/
-│   │   ├── bs_engine.py    # Vectorized BS pricing & Brent IV inversion
-│   │   └── svi_fit.py      # SVI and SSVI surface fitting logic
-│   ├── features.py         # RND moment extraction (skew, kurtosis)
-│   └── data_loader.py      # Live data ingestion & cleaning
-├── main.py                 # Live production pipeline orchestrator
-├── historical_pipeline.py  # Historical backtesting & dataset generation
-├── moe_feature_enrichment.py# ML feature engineering (regime indicators)
-├── notebooks/              # Research & development walkthroughs
+│   │   ├── bs_engine.py        # Vectorized BS pricing & Brent IV inversion
+│   │   └── svi_fit.py          # SVI and SSVI surface fitting logic
+│   ├── features.py             # RND moment extraction (skew, kurtosis)
+│   └── data_loader.py          # Live data ingestion & cleaning
+├── main.py                     # Live production pipeline orchestrator
+├── historical_pipeline.py      # Historical backtesting & dataset generation
+├── moe_feature_enrichment.py   # ML feature engineering (regime indicators)
+├── notebooks/                  # Research & development walkthroughs
+├── moe_forecaster.ipynb        #model notebook
+├── moe_forecaster.pt           #model
+├── batch_process_tickers.py    # script for multiple-ticker processing in historical pipeline
+├──setup.py
 ├── requirements.txt
 └── README.md
 
