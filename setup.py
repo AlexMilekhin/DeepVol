@@ -11,13 +11,13 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 
 setup(
-    name="volatility-surface-ml",
+    name="DeepVol",
     version="0.1.0",
-    author="Quant Developer",
+    author="Alexander Milekhin",
     description="Professional volatility surface modeling and forecasting package",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/volatility-surface-ml",
+    url="https://github.com/AlexMilekhin/DeepVol",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
